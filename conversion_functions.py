@@ -192,7 +192,7 @@ def gen_build_predetermined(
 
     #  create dictionaries {plant_gen_id: date} from eia excel file
     eia_Gen_dict = create_dict_plantgen(eia_Gen, "Operating Year")
-    eia_Gen_prop_dict = create_dict_plantgen(eia_Gen_prop, "Effective Year")
+    eia_Gen_prop_dict = create_dict_plantgen(eia_Gen_prop, "planned_operating_year")
 
     """
     Bring in dates based on dictionaries and the plant_gen_id column
@@ -272,80 +272,35 @@ def gen_build_predetermined(
     # change those columns to just year (instead of longer date)
     for c in columns:
         try:
-            pg_build[c] = pd.DatetimeIndex(pg_build[c]).year.astype(str)
+            pg_build[c] = pd.DatetimeIndex(pg_build[c]).year
         except:
             pass
 
+    op_columns = [
+        "operating_date",
+        "op_date",
+        "entity_op_date",
+        "PG_op_date",
+        "Operating Year",
+        "manual_yr",
+        "PG_op_yr",
+        "eia_gen_op_yr",
+        "eia_gen_manual_yr",
+        "proposed_year",
+        "proposed_manual_year",
+    ]
+    pg_build["build_final"] = pg_build[op_columns].max(axis=1)
     # get all build years into one column (includes manual dates and proposed dates)
-    pg_build["yr"] = (
-        pg_build["op_date"]
-        + ","
-        + pg_build["entity_op_date"].astype(str)
-        + ","
-        + pg_build["operating_date"]
-        + ","
-        + pg_build["Operating Year"].astype(str)
-        + ","
-        + pg_build["manual_yr"].astype(str)
-        + ","
-        + pg_build["PG_op_date"].astype(str)
-        + ","
-        + pg_build["PG_op_yr"].astype(str)
-        + ","
-        + pg_build["eia_gen_op_yr"].astype(str)
-        + ","
-        + pg_build["eia_gen_manual_yr"].astype(str)
-        + ","
-        + pg_build["proposed_year"].astype(str)
-        + ","
-        + pg_build["proposed_manual_year"].astype(str)
-    )
 
-    # remove nans from combined build year lists
-    pg_build["yr"] = pg_build["yr"].str.replace("nan,", "")
-    pg_build["yr"] = pg_build["yr"].str.replace(",nan", "")
-    pg_build["yr"] = pg_build["yr"].str.replace(",None", "")
-    pg_build["yr"] = pg_build["yr"].str.replace("None,", "")
-
-    # unique years for build year
-    year = pg_build[["yr"]]
-    year_list = year.values.tolist()
-    for i in range(len(year_list)):
-        year_list[i] = year_list[i][0].split(",")
-        year_list[i] = list(set(year_list[i]))[0]
-    pg_build["build_final"] = year_list
-
-    # get all retirement years into one column
-    pg_build["retirement"] = (
-        pg_build["planned_retirement_date"]
-        + ","
-        + pg_build["retirement_date"]
-        + ","
-        + pg_build["plan_retire_date"]
-        + ","
-        + pg_build["retirement_year"].astype(str)
-        + ","
-        + pg_build["PG_pl_retire"]
-        + ","
-        + pg_build["PG_retire_yr"].astype(str)
-        + ","
-        + pg_build["eia_gen_retired_yr"].astype(str)
-    )
-
-    # remve nans from combined retirement year lists
-    pg_build["retirement"] = pg_build["retirement"].str.replace("nan,", "")
-    pg_build["retirement"] = pg_build["retirement"].str.replace(",nan", "")
-    pg_build["retirement"] = pg_build["retirement"].str.replace(",None", "")
-    pg_build["retirement"] = pg_build["retirement"].str.replace("None,", "")
-
-    # pick latest retirement year
-    retire = pg_build[["retirement"]]
-    retire_list = retire.values.tolist()
-    for i in range(len(retire_list)):
-        retire_list[i] = retire_list[i][0].split(",")
-        adjusted_year = max(retire_list[i])
-        retire_list[i] = adjusted_year
-    pg_build["retire_year_final"] = retire_list
+    ret_columns = [
+        "planned_retirement_date",
+        "retirement_date",
+        "retirement_year",
+        "PG_pl_retire",
+        "PG_retire_yr",
+        "eia_gen_retired_yr",
+    ]
+    pg_build["retire_year_final"] = pg_build[ret_columns].max(axis=1)
 
     """
     Start creating the gen_build_predetermined table
@@ -492,23 +447,16 @@ def gen_build_costs_table(existing_gen, newgens, build_yr_plantid_dict, all_gen)
             "gen_storage_energy_overnight_cost",
         ]
     ]
-    #     existing.rename(columns={'index':'GENERATION_PROJECT'}, inplace=True)
-    #     existing.drop('plant_id_eia',axis=1, inplace=True)
 
-    combined_new_gens = pd.DataFrame()
-    # df_list = [new_gen_2020, new_gen_2030, new_gen_2040, new_gen_2050]
-    year_list = [2020, 2030, 2040, 2050]
-    for i in year_list:
-        df = newgens[newgens["build_year"] == i]
-        #     # df['build_year'] = year_list[i]
-        #     # start the new GENERATION_PROJECT ids from the end of existing_gen (should tie out to same as gen_proj_info)
+    df_list = []
+    for year, df in newgens.groupby("build_year"):
+        # start the new GENERATION_PROJECT ids from the end of existing_gen (should tie out to same as gen_proj_info)
         df["GENERATION_PROJECT"] = range(
             existing.shape[0] + 1, existing.shape[0] + 1 + df.shape[0]
         )
         df["GENERATION_PROJECT"] = df["GENERATION_PROJECT"].astype(str)
-        combined_new_gens = combined_new_gens.append(df)
-
-    # combined_new_gens = combined_new_gens.append(df)
+        df_list.append(df)
+    combined_new_gens = pd.concat(df_list)
 
     combined_new_gens["gen_fixed_om"] = combined_new_gens[
         "Fixed_OM_Cost_per_MWyr"
