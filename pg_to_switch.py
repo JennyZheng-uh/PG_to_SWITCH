@@ -1,3 +1,4 @@
+import sys
 import pandas as pd
 import numpy as np
 from datetime import datetime as dt
@@ -47,6 +48,11 @@ from conversion_functions import (
     transmission_lines_table,
     balancing_areas,
 )
+
+if not sys.warnoptions:
+    import warnings
+
+    warnings.simplefilter("ignore")
 
 
 def fuel_files(fuel_prices: pd.DataFrame, settings: dict, out_folder: Path):
@@ -230,32 +236,28 @@ def main(settings_file: str, results_folder: str):
     results_folder : str
         The folder where results will be saved
     """
-
     cwd = Path.cwd()
-
     out_folder = cwd / results_folder
     out_folder.mkdir(exist_ok=True)
 
+    # Load settings, create db connections, and build dictionary of settings across
+    # cases/years
     settings = load_settings(path=settings_file)
-
     pudl_engine, pudl_out, pg_engine = init_pudl_connection(
         freq="AS",
         start_year=min(settings.get("data_years")),
         end_year=max(settings.get("data_years")),
     )
-
     check_settings(settings, pg_engine)
     input_folder = cwd / settings["input_folder"]
     settings["input_folder"] = input_folder
-
     scenario_definitions = pd.read_csv(
         input_folder / settings["scenario_definitions_fn"]
     )
     scenario_settings = build_scenario_settings(settings, scenario_definitions)
 
-    print("settings loaded")
-
-    # Should switch the case_id/year layers in scenario settings
+    # Should switch the case_id/year layers in scenario settings dictionary.
+    # Run through the different cases and save files in a new folder for each.
     for case_id in scenario_definitions["case_id"]:
         print(f"starting case {case_id}")
         case_folder = out_folder / case_id
@@ -266,8 +268,6 @@ def main(settings_file: str, results_folder: str):
             settings_list.append(scenario_settings[year][case_id])
 
         gc = GeneratorClusters(pudl_engine, pudl_out, pg_engine, settings_list[0])
-
-        print("running gen prebuild newbuild")
         gen_prebuild_newbuild_files(gc, pudl_engine, settings_list, case_folder)
 
 
