@@ -564,14 +564,18 @@ def generation_projects_info(
         ]
     ]
 
+    gen_project_info["gen_connect_cost_per_mw"] = gen_project_info[
+        ["spur_capex", "interconnect_capex_mw"]
+    ].sum()
+
     # create gen_connect_cost_per_mw from spur_miles and spur_capex_mw_mile
     gen_project_info["spur_capex_mw_mi"] = gen_project_info["region"].apply(
         lambda x: spur_capex_mw_mile[x]
     )
     gen_project_info["spur_miles"] = gen_project_info["spur_miles"].fillna(0)
-    gen_project_info["gen_connect_cost_per_mw"] = (
-        gen_project_info["spur_capex_mw_mi"] * gen_project_info["spur_miles"]
-    )
+    gen_project_info.loc[
+        gen_project_info["gen_connect_cost_per_mw"] == 0, "gen_connect_cost_per_mw"
+    ] = (gen_project_info["spur_capex_mw_mi"] * gen_project_info["spur_miles"])
     gen_project_info = gen_project_info.drop(["spur_miles", "spur_capex_mw_mi"], axis=1)
 
     # Heat_Rate_MMBTU_per_MWh needs to be converted to Btu/kWh for gen_full_load_heat_rate
@@ -599,7 +603,7 @@ def generation_projects_info(
     battery = set(Filter(technology, ["Battery"]))
     gen_project_info.loc[
         gen_project_info["technology"].isin(battery), "gen_storage_efficiency"
-    ] = 0.75
+    ] = (gen_project_info[["Eff_Up", "Eff_Down"]].mean(axis=1) ** 2)
     gen_project_info["gen_storage_efficiency"] = gen_project_info[
         "gen_storage_efficiency"
     ].fillna(".")
