@@ -110,9 +110,8 @@ def plant_gen_id(df):
     """
     Create unique id for generator by combining plant_id_eia and generator_id
     """
-    df["plant_gen_id"] = (
-        df["plant_id_eia"].astype(str) + "_" + df["generator_id"].astype(str)
-    )
+    plant_id_eia = df["plant_id_eia"]
+    df["plant_gen_id"] = plant_id_eia.astype(str) + "_" + df["generator_id"].astype(str)
     return df
 
 
@@ -120,10 +119,18 @@ def plant_pudl_id(df):
     """
     Create unique id for generator by combining plant_id_eia and unit_pudl_id
     """
-    df["plant_pudl_id"] = (
-        df["plant_id_eia"].astype(str) + "_" + df["unit_id_pudl"].astype(str)
+    has_plant_id = df.loc[df["plant_id_eia"].notna(), :]
+    no_plant_id = df.loc[df["plant_id_eia"].isna(), :]
+    plant_id_eia = has_plant_id["plant_id_eia"]
+    unit_id_pudl = has_plant_id["unit_id_pudl"].astype(str)
+    has_plant_id.loc[~unit_id_pudl.str.contains("_"), "plant_pudl_id"] = (
+        plant_id_eia.astype(str) + "_" + unit_id_pudl
     )
-    return df
+    has_plant_id.loc[
+        has_plant_id["plant_pudl_id"].isna(), "plant_pudl_id"
+    ] = has_plant_id.loc[has_plant_id["plant_pudl_id"].isna(), "unit_id_pudl"]
+
+    return pd.concat([has_plant_id, no_plant_id], ignore_index=True)
 
 
 def gen_build_predetermined(
@@ -282,6 +289,7 @@ def gen_build_predetermined(
         "entity_op_date",
         "PG_op_date",
         "Operating Year",
+        "planned_operating_year",
         "manual_yr",
         "PG_op_yr",
         "eia_gen_op_yr",
@@ -292,15 +300,30 @@ def gen_build_predetermined(
     pg_build["build_final"] = pg_build[op_columns].max(axis=1)
     # get all build years into one column (includes manual dates and proposed dates)
 
+    plant_unit_tech = all_gen.dropna(subset=["plant_pudl_id"])[
+        ["plant_pudl_id", "technology"]
+    ]
+    plant_unit_tech = plant_unit_tech.drop_duplicates(subset=["plant_pudl_id"])
+    plant_unit_tech = plant_unit_tech.set_index("plant_pudl_id")["technology"]
+    pg_build["technology"] = pg_build["plant_pudl_id"].map(plant_unit_tech)
+    pg_build["retirement_age"] = pg_build["technology"].map(retirement_ages)
+    pg_build["calc_retirement_year"] = (
+        pg_build["build_final"] + pg_build["retirement_age"]
+    )
+    if not pg_build.query("retirement_age.isna()").empty:
+        missing_techs = pg_build.query("retirement_age.isna()")["technology"].unique()
+        print(f"The technologies {missing_techs} do not have retirement ages.")
     ret_columns = [
         "planned_retirement_date",
-        "retirement_date",
         "retirement_year",
+        "plan_retire_date",
+        "retirement_date",
         "PG_pl_retire",
         "PG_retire_yr",
         "eia_gen_retired_yr",
+        "calc_retirement_year",
     ]
-    pg_build["retire_year_final"] = pg_build[ret_columns].max(axis=1)
+    pg_build["retire_year_final"] = pg_build[ret_columns].min(axis=1)
 
     """
     Start creating the gen_build_predetermined table
@@ -345,9 +368,11 @@ def gen_build_predetermined(
     mask = gen_buildpre["build_year"] == "None"
     nans = gen_buildpre[mask]
 
-    gen_buildpre.loc[mask, "build_year"] = nans.apply(
-        lambda row: float(row.retirement_year) - retirement_ages[row.technology], axis=1
-    )
+    if not nans.empty:
+        gen_buildpre.loc[mask, "build_year"] = nans.apply(
+            lambda row: float(row.retirement_year) - retirement_ages[row.technology],
+            axis=1,
+        )
 
     # don't include new builds in gen_build_predetermined
     #     new_builds['GENERATION_PROJECT'] = range(gen_buildpre.shape[0]+1, gen_buildpre.shape[0]+1+new_builds.shape[0])
@@ -548,7 +573,7 @@ def generation_projects_info(
             blanks based on REAM
     """
 
-    gen_project_info = all_gen.copy()
+    gen_project_info = all_gen.copy().reset_index(drop=True)
 
     # get columns for GENERATION_PROJECT, gen_tech, gen_load_zone, gen_full_load_heat_rate, gen_variable_om,
     # gen_connect_cost_per_mw and gen_capacity_limit_mw
@@ -561,6 +586,10 @@ def generation_projects_info(
             "Var_OM_Cost_per_MWh",
             "spur_miles",
             "Existing_Cap_MW",
+            "spur_capex",
+            "interconnect_capex_mw",
+            "Eff_Up",
+            "Eff_Down",
         ]
     ]
 
@@ -644,9 +673,17 @@ def generation_projects_info(
     gen_project_info["gen_storage_energy_to_power_ratio"] = "."
 
     # retirement ages based on settings file still need to be updated
-    gen_project_info["gen_max_age"] = gen_project_info["technology"].apply(
-        lambda x: retirement_age[x]
-    )
+    gen_project_info["gen_max_age"] = gen_project_info["technology"].map(retirement_age)
+
+    # Tell user about missing retirement ages
+    if not gen_project_info.query("gen_max_age.isna()").empty:
+        missing_ret_tech = gen_project_info.query("gen_max_age.isna()")[
+            "technology"
+        ].unique()
+        print(
+            f"The technologies {missing_ret_tech} do not have a valid retirement age in "
+            "your settings file."
+        )
 
     # GENERATION_PROJECT - the all_gen.index column has NaNs for the new generators.  Use actual index for all_gen
     gen_project_info["GENERATION_PROJECT"] = gen_project_info.index + 1

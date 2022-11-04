@@ -24,6 +24,7 @@ from powergenome.external_data import (
     make_demand_response_profiles,
     make_generator_variability,
 )
+from powergenome.GenX import add_misc_gen_values
 
 from conversion_functions import (
     switch_fuel_cost_table,
@@ -55,22 +56,24 @@ if not sys.warnoptions:
     warnings.simplefilter("ignore")
 
 
-def fuel_files(fuel_prices: pd.DataFrame, settings: dict, out_folder: Path):
-
-    years = settings["model_year"]
-    IPM_regions = settings.get("model_regions")
-    aeo_fuel_region_map = settings.get("aeo_fuel_region_map")
-    # aeo_fuel_region_map
+def fuel_files(
+    fuel_prices: pd.DataFrame,
+    planning_years: List[int],
+    regions: List[str],
+    fuel_region_map: Dict[str, List[str]],
+    fuel_emission_factors: Dict[str, float],
+    out_folder: Path,
+):
 
     fuel_cost = switch_fuel_cost_table(
-        aeo_fuel_region_map,
+        fuel_region_map,
         fuel_prices,
-        IPM_regions,
+        regions,
         scenario="reference",
-        year_list=years,
+        year_list=planning_years,
     )
 
-    fuels_table = switch_fuels(fuel_prices, settings["fuel_emission_factors"])
+    fuels_table = switch_fuels(fuel_prices, fuel_emission_factors)
     fuels_table.loc[len(fuels_table.index)] = [
         "Fuel",
         0,
@@ -81,7 +84,142 @@ def fuel_files(fuel_prices: pd.DataFrame, settings: dict, out_folder: Path):
     fuels_table.to_csv(out_folder / "fuels.csv", index=False)
 
 
-def gen_prebuild_newbuild_files(
+def gen_projects_info_file(
+    complete_gens: pd.DataFrame, settings: dict, out_folder: Path
+):
+
+    if settings.get("cogen_tech"):
+        cogen_tech = settings["cogen_tech"]
+    else:
+        cogen_tech = {
+            "Onshore Wind Turbine": False,
+            "Biomass": False,
+            "Conventional Hydroelectric": False,
+            "Conventional Steam Coal": False,
+            "Natural Gas Fired Combined Cycle": False,
+            "Natural Gas Fired Combustion Turbine": False,
+            "Natural Gas Steam Turbine": False,
+            "Nuclear": False,
+            "Solar Photovoltaic": False,
+            "Hydroelectric Pumped Storage": False,
+            "Offshore Wind Turbine": False,
+            "Small Hydroelectric": False,
+            "NaturalGas_CCCCSAvgCF_Conservative": False,
+            "NaturalGas_CCAvgCF_Moderate": False,
+            "NaturalGas_CTAvgCF_Moderate": False,
+            "Battery_*_Moderate": False,
+            "NaturalGas_CCS100_Moderate": False,
+            "heat_load_shifting": False,
+        }
+    if settings.get("baseload_tech"):
+        baseload_tech = settings.get("baseload_tech")
+    else:
+        baseload_tech = {
+            "Onshore Wind Turbine": False,
+            "Biomass": False,
+            "Conventional Hydroelectric": False,
+            "Conventional Steam Coal": True,
+            "Natural Gas Fired Combined Cycle": False,
+            "Natural Gas Fired Combustion Turbine": False,
+            "Natural Gas Steam Turbine": False,
+            "Nuclear": True,
+            "Solar Photovoltaic": False,
+            "Hydroelectric Pumped Storage": False,
+            "Offshore Wind Turbine": False,
+            "Small Hydroelectric": False,
+            "NaturalGas_CCCCSAvgCF_Conservative": False,
+            "NaturalGas_CCAvgCF_Moderate": False,
+            "NaturalGas_CTAvgCF_Moderate": False,
+            "Battery_*_Moderate": False,
+            "NaturalGas_CCS100_Moderate": False,
+            "heat_load_shifting": False,
+        }
+    if settings.get("energy_tech"):
+        energy_tech = settings["energy_tech"]
+    else:
+        energy_tech = {
+            "Onshore Wind Turbine": "Wind",
+            "Biomass": "Bio Solid",
+            "Conventional Hydroelectric": "Water",
+            "Conventional Steam Coal": "Coal",
+            "Natural Gas Fired Combined Cycle": "Naturalgas",
+            "Natural Gas Fired Combustion Turbine": "Naturalgas",
+            "Natural Gas Steam Turbine": "Naturalgas",
+            "Nuclear": "Uranium",
+            "Solar Photovoltaic": "Solar",
+            "Hydroelectric Pumped Storage": "Water",
+            "Offshore Wind Turbine": "Wind",
+            "Small Hydroelectric": "Water",
+            "NaturalGas_CCCCSAvgCF_Conservative": "Naturalgas",
+            "NaturalGas_CCAvgCF_Moderate": "Naturalgas",
+            "NaturalGas_CTAvgCF_Moderate": "Naturalgas",
+            "Battery_*_Moderate": "Electricity",
+            "NaturalGas_CCS100_Moderate": "Naturalgas",
+            "heat_load_shifting": False,
+        }
+    if settings.get("forced_outage_tech"):
+        forced_outage_tech = settings["forced_outage_tech"]
+    else:
+        forced_outage_tech = {
+            "Onshore Wind Turbine": 0.0,
+            "Biomass": 0.04,
+            "Conventional Hydroelectric": 0.05,
+            "Conventional Steam Coal": 0.04,
+            "Natural Gas Fired Combined Cycle": 0.4,
+            "Natural Gas Fired Combustion Turbine": 0.4,
+            "Natural Gas Steam Turbine": 0.4,
+            "Nuclear": 0.04,
+            "Solar Photovoltaic": 0.0,
+            "Hydroelectric Pumped Storage": 0.05,
+            "Offshore Wind Turbine": 0.05,
+            "Small Hydroelectric": 0.05,
+            "NaturalGas_CCCCSAvgCF_Conservative": 0.4,
+            "NaturalGas_CCAvgCF_Moderate": 0.4,
+            "NaturalGas_CTAvgCF_Moderate": 0.4,
+            "Battery_*_Moderate": 0.02,
+            "NaturalGas_CCS100_Moderate": 0.4,
+            "heat_load_shifting": False,
+        }
+    if settings.get("sched_outage_tech"):
+        sched_outage_tech = settings["sched_outage_tech"]
+    else:
+        sched_outage_tech = {
+            "Onshore Wind Turbine": 0.0,
+            "Biomass": 0.06,
+            "Conventional Hydroelectric": 0.05,
+            "Conventional Steam Coal": 0.06,
+            "Natural Gas Fired Combined Cycle": 0.6,
+            "Natural Gas Fired Combustion Turbine": 0.6,
+            "Natural Gas Steam Turbine": 0.6,
+            "Nuclear": 0.06,
+            "Solar Photovoltaic": 0.0,
+            "Hydroelectric Pumped Storage": 0.05,
+            "Offshore Wind Turbine": 0.01,
+            "Small Hydroelectric": 0.05,
+            "NaturalGas_CCCCSAvgCF_Conservative": 0.6,
+            "NaturalGas_CCAvgCF_Moderate": 0.6,
+            "NaturalGas_CTAvgCF_Moderate": 0.6,
+            "Battery_*_Moderate": 0.01,
+            "NaturalGas_CCS100_Moderate": 0.6,
+            "heat_load_shifting": False,
+        }
+
+    gen_project_info = generation_projects_info(
+        complete_gens,
+        settings.get("transmission_investment_cost")["spur"]["capex_mw_mile"],
+        settings.get("retirement_ages"),
+        cogen_tech,
+        baseload_tech,
+        energy_tech,
+        sched_outage_tech,
+        forced_outage_tech,
+    )
+
+    # Do I need to set full load heat rate to "." for non-fuel energy generators?
+    gen_project_info.to_csv(out_folder / "generation_projects_info.csv", index=False)
+
+
+def gen_prebuild_newbuild_info_files(
     gc: GeneratorClusters,
     pudl_engine: sa.engine,
     settings_list: List[dict],
@@ -90,10 +228,37 @@ def gen_prebuild_newbuild_files(
     out_folder.mkdir(parents=True, exist_ok=True)
     settings = settings_list[0]
     all_gen = gc.create_all_generators()
+    all_gen["plant_id_eia"] = all_gen["plant_id_eia"].astype("Int64")
     existing_gen = all_gen.loc[
         all_gen["plant_id_eia"].notna(), :
     ]  # gc.create_region_technology_clusters()
-    generators_eia860 = pd.read_sql_table("generators_eia860", pudl_engine)
+
+    data_years = gc.settings.get("data_years", [])
+    if not isinstance(data_years, list):
+        data_years = [data_years]
+    data_years = [str(y) for y in data_years]
+    s = f"""
+        SELECT
+            "plant_id_eia",
+            "generator_id",
+            "operational_status",
+            "retirement_date",
+            "planned_retirement_date",
+            "current_planned_operating_date"
+        FROM generators_eia860
+        WHERE strftime('%Y',report_date) in ({','.join('?'*len(data_years))})
+    """
+    # generators_eia860 = pd.read_sql_table("generators_eia860", pudl_engine)
+    generators_eia860 = pd.read_sql_query(
+        s,
+        pudl_engine,
+        params=data_years,
+        parse_dates=[
+            "planned_retirement_date",
+            "retirement_date",
+            "current_planned_operating_date",
+        ],
+    )
 
     generators_entity_eia = pd.read_sql_table("generators_entity_eia", pudl_engine)
     # create copies of PUDL tables and filter to relevant columns
@@ -156,6 +321,7 @@ def gen_prebuild_newbuild_files(
             "plant_id_eia",
             "generator_id",
             "unit_id_pudl",
+            "planned_operating_year",
             "planned_retirement_date",
             "operating_date",
             "Operating Year",
@@ -222,6 +388,13 @@ def gen_prebuild_newbuild_files(
         inplace=True,
     )
 
+    # Create a complete list of existing and new-build options
+    complete_gens = pd.concat([existing_gen, newgens]).drop_duplicates(
+        subset=["Resource"]
+    )
+    complete_gens = add_misc_gen_values(complete_gens, gc.settings)
+    gen_projects_info_file(complete_gens, gc.settings, out_folder)
+
     gen_buildpre.to_csv(out_folder / "gen_build_predetermined.csv", index=False)
     gen_build_costs.to_csv(out_folder / "gen_build_costs.csv", index=False)
 
@@ -258,17 +431,27 @@ def main(settings_file: str, results_folder: str):
 
     # Should switch the case_id/year layers in scenario settings dictionary.
     # Run through the different cases and save files in a new folder for each.
-    for case_id in scenario_definitions["case_id"]:
+    for case_id in scenario_definitions["case_id"].unique():
         print(f"starting case {case_id}")
         case_folder = out_folder / case_id
         case_folder.mkdir(parents=True, exist_ok=True)
 
         settings_list = []
+        case_years = []
         for year in scenario_definitions.query("case_id == @case_id")["year"]:
+            case_years.append(year)
             settings_list.append(scenario_settings[year][case_id])
 
         gc = GeneratorClusters(pudl_engine, pudl_out, pg_engine, settings_list[0])
-        gen_prebuild_newbuild_files(gc, pudl_engine, settings_list, case_folder)
+        gen_prebuild_newbuild_info_files(gc, pudl_engine, settings_list, case_folder)
+        fuel_files(
+            fuel_prices=gc.fuel_prices,
+            planning_years=case_years,
+            regions=settings["model_regions"],
+            fuel_region_map=settings["aeo_fuel_region_map"],
+            fuel_emission_factors=settings["fuel_emission_factors"],
+            out_folder=case_folder,
+        )
 
 
 if __name__ == "__main__":
